@@ -131,10 +131,16 @@ def calculate_returns_and_metrics(data_dict):
 
 def calculate_max_drawdown(prices):
     """Calculate maximum drawdown."""
-    cumulative = (1 + np.log(prices / prices.shift(1)).fillna(0)).cumprod()
-    running_max = cumulative.expanding().max()
-    drawdown = (cumulative - running_max) / running_max
-    return drawdown.min()
+    try:
+        # Calculate percentage changes
+        returns = prices.pct_change().fillna(0)
+        cumulative = (1 + returns).cumprod()
+        running_max = cumulative.expanding().max()
+        drawdown = (cumulative - running_max) / running_max
+        return drawdown.min()
+    except Exception as e:
+        print(f"Max drawdown calculation error: {e}")
+        return 0.0
 
 def create_risk_ranking(results):
     """Create risk ranking and categorization."""
@@ -159,15 +165,22 @@ def create_risk_ranking(results):
     
     df = pd.DataFrame(df_metrics)
     
-    # Calculate risk scores
-    # Higher volatility, higher kurtosis, more extreme days = higher risk
-    df['Risk_Score'] = (
-        df['Annual_Volatility'].rank(pct=True) * 0.3 +
-        df['Kurtosis'].rank(pct=True) * 0.2 +
-        df['Extreme_Days'].rank(pct=True) * 0.2 +
-        (-df['Max_Drawdown']).rank(pct=True) * 0.2 +  # More negative = higher risk
-        (-df['VaR_95']).rank(pct=True) * 0.1  # More negative = higher risk
-    )
+    # Handle NaN values and reset index
+    df = df.fillna(0).reset_index(drop=True)
+    
+    # Calculate risk scores with safe ranking
+    try:
+        df['Risk_Score'] = (
+            df['Annual_Volatility'].rank(pct=True, method='dense') * 0.3 +
+            df['Kurtosis'].rank(pct=True, method='dense') * 0.2 +
+            df['Extreme_Days'].rank(pct=True, method='dense') * 0.2 +
+            df['Max_Drawdown'].abs().rank(pct=True, method='dense') * 0.2 +
+            df['VaR_95'].abs().rank(pct=True, method='dense') * 0.1
+        )
+    except Exception as e:
+        print(f"Risk score calculation error: {e}")
+        # Fallback: simple scoring
+        df['Risk_Score'] = df['Annual_Volatility'] / df['Annual_Volatility'].max()
     
     # Categorize risk levels
     df['Risk_Category'] = pd.cut(df['Risk_Score'], 
